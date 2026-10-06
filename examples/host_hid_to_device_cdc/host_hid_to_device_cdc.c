@@ -3,6 +3,7 @@
  *
  * Copyright (c) 2019 Ha Thach (tinyusb.org)
  *                    sekigon-gonnoc
+ * Copyright (c) 2026 Victor Suarez Rovere <suarezvictor@gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,32 +39,9 @@
 #include "pico/multicore.h"
 #include "pico/bootrom.h"
 
+#include "host/hcd.h"
 #include "pio_usb.h"
 #include "tusb.h"
-
-//--------------------------------------------------------------------+
-// MACRO CONSTANT TYPEDEF PROTYPES
-//--------------------------------------------------------------------+
-
-// uncomment if you are using colemak layout
-// #define KEYBOARD_COLEMAK
-
-#ifdef KEYBOARD_COLEMAK
-const uint8_t colemak[128] = {
-  0  ,  0,  0,  0,  0,  0,  0, 22,
-  9  , 23,  7,  0, 24, 17,  8, 12,
-  0  , 14, 28, 51,  0, 19, 21, 10,
-  15 ,  0,  0,  0, 13,  0,  0,  0,
-  0  ,  0,  0,  0,  0,  0,  0,  0,
-  0  ,  0,  0,  0,  0,  0,  0,  0,
-  0  ,  0,  0, 18,  0,  0,  0,  0,
-  0  ,  0,  0,  0,  0,  0,  0,  0,
-  0  ,  0,  0,  0,  0,  0,  0,  0,
-  0  ,  0,  0,  0,  0,  0,  0,  0
-};
-#endif
-
-static uint8_t const keycode2ascii[128][2] =  { HID_KEYCODE_TO_ASCII };
 
 /*------------- MAIN -------------*/
 
@@ -126,6 +104,7 @@ void tud_cdc_rx_cb(uint8_t itf)
 //--------------------------------------------------------------------+
 // Host HID
 //--------------------------------------------------------------------+
+void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t const* report, uint16_t len);
 
 // Invoked when device with hid interface is mounted
 // Report descriptor is also available for use. tuh_hid_parse_report_descriptor()
@@ -134,136 +113,96 @@ void tud_cdc_rx_cb(uint8_t itf)
 // therefore report_desc = NULL, desc_len = 0
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len)
 {
-  (void)desc_report;
-  (void)desc_len;
-
-  // Interface protocol (hid_interface_protocol_enum_t)
-  const char* protocol_str[] = { "None", "Keyboard", "Mouse" };
-  uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-
-  uint16_t vid, pid;
-  tuh_vid_pid_get(dev_addr, &vid, &pid);
-
-  char tempbuf[256];
-  int count = sprintf(tempbuf, "[%04x:%04x][%u] HID Interface%u, Protocol = %s\r\n", vid, pid, dev_addr, instance, protocol_str[itf_protocol]);
-
-  tud_cdc_write(tempbuf, count);
-  tud_cdc_write_flush();
 
   // Receive report from boot keyboard & mouse only
   // tuh_hid_report_received_cb() will be invoked when report is available
-  if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD || itf_protocol == HID_ITF_PROTOCOL_MOUSE)
-  {
-    if ( !tuh_hid_receive_report(dev_addr, instance) )
-    {
-      tud_cdc_write_str("Error: cannot request report\r\n");
-    }
-  }
+	if ( !tuh_hid_receive_report(dev_addr, instance) )
+	{
+	  tud_cdc_write_str("Error: cannot request report\r\n");
+	}
+	else
+	  dump_report(HCD_EVENT_DEVICE_ATTACH, dev_addr, instance, desc_report, desc_len);
 }
 
 // Invoked when device with hid interface is un-mounted
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 {
-  char tempbuf[256];
-  int count = sprintf(tempbuf, "[%u] HID Interface%u is unmounted\r\n", dev_addr, instance);
-  tud_cdc_write(tempbuf, count);
-  tud_cdc_write_flush();
-}
-
-// look up new key in previous keys
-static inline bool find_key_in_report(hid_keyboard_report_t const *report, uint8_t keycode)
-{
-  for(uint8_t i=0; i<6; i++)
-  {
-    if (report->keycode[i] == keycode)  return true;
-  }
-
-  return false;
-}
-
-
-// convert hid keycode to ascii and print via usb device CDC (ignore non-printable)
-static void process_kbd_report(uint8_t dev_addr, hid_keyboard_report_t const *report)
-{
-  (void) dev_addr;
-  static hid_keyboard_report_t prev_report = { 0, 0, {0} }; // previous report to check key released
-  bool flush = false;
-
-  for(uint8_t i=0; i<6; i++)
-  {
-    uint8_t keycode = report->keycode[i];
-    if ( keycode )
-    {
-      if ( find_key_in_report(&prev_report, keycode) )
-      {
-        // exist in previous report means the current key is holding
-      }else
-      {
-        // not existed in previous report means the current key is pressed
-
-        // remap the key code for Colemak layout
-        #ifdef KEYBOARD_COLEMAK
-        uint8_t colemak_key_code = colemak[keycode];
-        if (colemak_key_code != 0) keycode = colemak_key_code;
-        #endif
-
-        bool const is_shift = report->modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT);
-        uint8_t ch = keycode2ascii[keycode][is_shift ? 1 : 0];
-
-        if (ch)
-        {
-          if (ch == '\n') tud_cdc_write("\r", 1);
-          tud_cdc_write(&ch, 1);
-          flush = true;
-        }
-      }
-    }
-    // TODO example skips key released
-  }
-
-  if (flush) tud_cdc_write_flush();
-
-  prev_report = *report;
-}
-
-// send mouse report to usb device CDC
-static void process_mouse_report(uint8_t dev_addr, hid_mouse_report_t const * report)
-{
-  //------------- button state  -------------//
-  //uint8_t button_changed_mask = report->buttons ^ prev_report.buttons;
-  char l = report->buttons & MOUSE_BUTTON_LEFT   ? 'L' : '-';
-  char m = report->buttons & MOUSE_BUTTON_MIDDLE ? 'M' : '-';
-  char r = report->buttons & MOUSE_BUTTON_RIGHT  ? 'R' : '-';
-
-  char tempbuf[32];
-  int count = sprintf(tempbuf, "[%u] %c%c%c %d %d %d\r\n", dev_addr, l, m, r, report->x, report->y, report->wheel);
-
-  tud_cdc_write(tempbuf, count);
-  tud_cdc_write_flush();
+  dump_report(HCD_EVENT_DEVICE_REMOVE, dev_addr, instance, NULL, 0);
 }
 
 // Invoked when received report from device via interrupt endpoint
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len)
 {
-  (void) len;
-  uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-
-  switch(itf_protocol)
-  {
-    case HID_ITF_PROTOCOL_KEYBOARD:
-      process_kbd_report(dev_addr, (hid_keyboard_report_t const*) report );
-    break;
-
-    case HID_ITF_PROTOCOL_MOUSE:
-      process_mouse_report(dev_addr, (hid_mouse_report_t const*) report );
-    break;
-
-    default: break;
-  }
-
-  // continue to request to receive report
   if ( !tuh_hid_receive_report(dev_addr, instance) )
   {
     tud_cdc_write_str("Error: cannot request report\r\n");
   }
+  else
+    dump_report(HCD_EVENT_XFER_COMPLETE, dev_addr, instance, report, len);
+}
+
+
+void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t const* report, uint16_t len)
+{
+	uint16_t vid, pid;
+	tuh_vid_pid_get(addr, &vid, &pid);
+
+	char tempbuf[256];
+	int count;
+	count = sprintf(tempbuf, "Magic %02x EVENT type %02x, addr %02x, instance %02x, [%04x:%04x] payload len %04x: ",
+		0x90, evt, addr, instance, vid, pid, len);
+	tud_cdc_write(tempbuf, count);
+
+	while(len--)
+	{
+	  //example HCD_EVENT_XFER_COMPLETE report for VID:PID 222a:0001
+	  //START: 04 40 f6 05 55 28 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 01 ff 00 00 00 00 00 00
+	  //DRAG: 04 40 2c 06 35 28 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 50 00 00 00 01 41 ff 00 00 00 00 00 00
+	  //RELEASE: 04 00 98 05 3b 28 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10 0e 00 00 01 01 ff 00 00 00 00 00 00
+
+	  /*
+	  this together with te description report seems to imply:
+	#define TOUCH_REPORT_ID     0x04
+	#define TOUCH_MAX_CONTACTS  10
+	#define TOUCH_LOGICAL_MAX   16384
+
+	typedef struct __attribute__((packed)) {
+		uint8_t  contact_id : 6;   // bits 0-5
+		uint8_t  tip_switch : 1;   // bit 6
+		uint8_t  pad        : 1;   // bit 7
+		uint16_t x;                // 0..16384
+		uint16_t y;                // 0..16384
+	} touch_finger_t;
+
+	typedef struct __attribute__((packed)) {
+		uint8_t        report_id;                   // 0x04
+		touch_finger_t finger[TOUCH_MAX_CONTACTS];
+		uint32_t       scan_time;
+		uint8_t        contact_count;
+		uint8_t        vendor_reserved[8];
+	} touch_report_t;
+	*/
+
+	  count = sprintf(tempbuf, "%02x ", *report++);
+	  tud_cdc_write(tempbuf, count);
+	}
+
+	tud_cdc_write_str("\r\n");
+
+	switch(evt)
+	{
+		case HCD_EVENT_DEVICE_ATTACH:
+			//850 bytes descriptor for PID:VID 222a:0001
+			tud_cdc_write_str("(EVENT_DEVICE_ATTACH)\r\n\r\n");
+			break;
+
+		case HCD_EVENT_DEVICE_REMOVE:
+			tud_cdc_write_str("(HCD_EVENT_DEVICE_REMOVE)\r\n\r\n");
+			break;
+
+		default:
+			break;
+	}
+
+	tud_cdc_write_flush();
 }
