@@ -156,15 +156,23 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 
 void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t const* report, uint16_t len)
 {
-	uint16_t vid, pid;
-	tuh_vid_pid_get(addr, &vid, &pid);
+	struct __attribute__((packed))
+	{
+	  uint8_t magic, evt, addr, instance;
+	  uint16_t vid, pid, len;
+	} header = { 0x90, evt, addr, instance, 0, 0, len };
+	
+	tuh_vid_pid_get(addr, &header.vid, &header.pid);
 
 	char tempbuf[256];
 	int count;
 	count = sprintf(tempbuf, "Magic %02x EVENT type %02x, addr %02x, instance %02x, [%04x:%04x] payload len %04x: ",
-		0x90, evt, addr, instance, vid, pid, len);
+		header.magic, header.evt, header.addr, header.instance, header.vid, header.pid, header.len);
 	tud_cdc_write(tempbuf, count);
-	uart_write_blocking(UART_ID, tempbuf, count);
+
+	uart_write_blocking(UART_ID, (uint8_t*) &header, sizeof(header));
+    uart_write_blocking(UART_ID, report, len);
+	uart_tx_wait_blocking(UART_ID);
 
 	while(len--)
 	{
@@ -198,11 +206,9 @@ void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 
 	  count = sprintf(tempbuf, "%02x ", *report++);
 	  tud_cdc_write(tempbuf, count);
-	  uart_write_blocking(UART_ID, tempbuf, count);
 	}
 
 	tud_cdc_write_str("\r\n");
-	uart_puts(UART_ID, "\r\n");
 
 	switch(evt)
 	{
@@ -220,5 +226,4 @@ void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 	}
 
 	tud_cdc_write_flush();
-	uart_tx_wait_blocking(UART_ID);
 }
