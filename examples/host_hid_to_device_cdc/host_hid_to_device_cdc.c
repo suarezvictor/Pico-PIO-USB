@@ -38,6 +38,7 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/bootrom.h"
+#include "pico/util/queue.h"
 
 #include "host/hcd.h"
 #include "pio_usb.h"
@@ -48,6 +49,20 @@
 #define BAUD_RATE	115200
 #define UART_TX_PIN	20
 #define UART_RX_PIN	21
+
+#define REPORT_QUEUE_SIZE	10 //TODO: increase it with smaller data report buffers
+
+
+typedef struct __attribute__((packed))
+{
+	  uint8_t magic, evt, addr, instance;
+	  uint16_t vid, pid, len;
+} report_header_t;
+
+typedef struct {
+    report_header_t header;
+    uint8_t report[CFG_TUH_ENUMERATION_BUFSIZE];
+} hid_report_entry_t;
 
 /*------------- MAIN -------------*/
 
@@ -69,6 +84,16 @@ void core1_main() {
   }
 }
 
+static queue_t report_queues[CFG_TUH_DEVICE_MAX][CFG_TUH_HID];
+
+typedef struct {
+    uint8_t dev_addr;
+    uint8_t instance;
+} hid_dev_id_t;
+
+static queue_t resume_queue;
+void on_uart1_rx();
+
 // core0: handle device events
 int main(void) {
   // default 125MHz is not appropreate. Sysclock should be multiple of 12MHz.
@@ -88,9 +113,40 @@ int main(void) {
   gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
   gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
   uart_set_format(UART_ID, 8, 1, UART_PARITY_NONE);
+  
+  uart_set_irq_enables(UART_ID, true, false);
+  irq_set_exclusive_handler(UART1_IRQ, on_uart1_rx);
+  irq_set_enabled(UART1_IRQ, true);
+
+  for (uint8_t dev_addr = 1; dev_addr <= CFG_TUH_DEVICE_MAX; ++dev_addr)
+  {
+      for (uint8_t instance = 0; instance < CFG_TUH_HID; ++instance)
+      {
+		if(queue_init(&report_queues[dev_addr-1][instance], sizeof(hid_report_entry_t), REPORT_QUEUE_SIZE))
+			continue;
+
+		tud_cdc_write_str("Error: cannot allocate queues\r\n");
+		tud_cdc_write_flush();
+		panic("Error: cannot allocate queues\r\n");
+      }
+  }
+  queue_init(&resume_queue, sizeof(hid_dev_id_t), CFG_TUH_DEVICE_MAX*CFG_TUH_HID);
 
   while (true) {
     tud_task(); // tinyusb device task
+    
+	hid_dev_id_t dev_id;
+    while (queue_try_remove(&resume_queue, &dev_id))
+    {
+		tud_cdc_write_str("Resuming queue\r\n");
+        if (tuh_hid_mounted(dev_id.dev_addr, dev_id.instance))
+        {
+            tuh_hid_receive_report(dev_id.dev_addr, dev_id.instance);
+			tud_cdc_write_str("***Resuming calls using tuh_hid_receive_report\r\n");
+        }
+		tud_cdc_write_flush();
+    }
+    
     tud_cdc_write_flush();
   }
 
@@ -113,10 +169,40 @@ void tud_cdc_rx_cb(uint8_t itf)
   (void) count;
 }
 
+void on_uart1_rx()
+{
+    if(!uart_is_readable(UART_ID))
+      return;
+
+  uart_getc(UART_ID);
+
+  hid_report_entry_t entry;
+  for (uint8_t dev_addr = 1; dev_addr <= CFG_TUH_DEVICE_MAX; ++dev_addr)
+  {
+      for (uint8_t instance = 0; instance < CFG_TUH_HID; ++instance)
+      {
+		  queue_t *q = &report_queues[dev_addr-1][instance];
+		  bool was_full = queue_is_full(q);
+
+    		if (queue_try_remove(q, &entry))
+    		{
+				uart_write_blocking(UART_ID, (uint8_t*) &entry.header, sizeof(entry.header));
+				uart_write_blocking(UART_ID, entry.report, entry.header.len);
+
+				if (was_full)
+				{
+					hid_dev_id_t dev_id = { entry.header.addr, entry.header.instance };
+					queue_try_add(&resume_queue, &dev_id);
+				    tud_cdc_write_str("Error: buffer was full in tud_cdc_rx_cb\r\n");
+				}
+			}
+		}
+    }
+}
 //--------------------------------------------------------------------+
 // Host HID
 //--------------------------------------------------------------------+
-void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t const* report, uint16_t len);
+bool dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t const* report, uint16_t len);
 
 // Invoked when device with hid interface is mounted
 // Report descriptor is also available for use. tuh_hid_parse_report_descriptor()
@@ -126,14 +212,18 @@ void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len)
 {
 
-  // Receive report from boot keyboard & mouse only
+	if(!dump_report(HCD_EVENT_DEVICE_ATTACH, dev_addr, instance, desc_report, desc_len))
+	{
+	  tud_cdc_write_str("Error: buffer full in uh_hid_mount_cb\r\n");
+	  return;
+	}
+
+
   // tuh_hid_report_received_cb() will be invoked when report is available
 	if ( !tuh_hid_receive_report(dev_addr, instance) )
 	{
 	  tud_cdc_write_str("Error: cannot request report\r\n");
 	}
-	else
-	  dump_report(HCD_EVENT_DEVICE_ATTACH, dev_addr, instance, desc_report, desc_len);
 }
 
 // Invoked when device with hid interface is un-mounted
@@ -145,34 +235,37 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 // Invoked when received report from device via interrupt endpoint
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len)
 {
+	if(!dump_report(HCD_EVENT_XFER_COMPLETE, dev_addr, instance, report, len))
+	{
+	  tud_cdc_write_str("Error: buffer full in tuh_hid_report_received_cb\r\n");
+	  return;
+	}
+
   if ( !tuh_hid_receive_report(dev_addr, instance) )
   {
     tud_cdc_write_str("Error: cannot request report\r\n");
   }
-  else
-    dump_report(HCD_EVENT_XFER_COMPLETE, dev_addr, instance, report, len);
 }
 
-
-void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t const* report, uint16_t len)
+bool dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t const* report, uint16_t len)
 {
-	struct __attribute__((packed))
-	{
-	  uint8_t magic, evt, addr, instance;
-	  uint16_t vid, pid, len;
-	} header = { 0x90, evt, addr, instance, 0, 0, len };
+	bool added = false;
 	
-	tuh_vid_pid_get(addr, &header.vid, &header.pid);
+	uint16_t vid, pid;
+	tuh_vid_pid_get(addr, &vid, &pid);
+	hid_report_entry_t entry = { .header = { 0x90, evt, addr, instance, vid, pid, len }};
 
 	char tempbuf[256];
 	int count;
 	count = sprintf(tempbuf, "Magic %02x EVENT type %02x, addr %02x, instance %02x, [%04x:%04x] payload len %04x: ",
-		header.magic, header.evt, header.addr, header.instance, header.vid, header.pid, header.len);
+		entry.header.magic, evt, addr, instance, vid, pid, len);
 	tud_cdc_write(tempbuf, count);
-
-	uart_write_blocking(UART_ID, (uint8_t*) &header, sizeof(header));
-    uart_write_blocking(UART_ID, report, len);
-	uart_tx_wait_blocking(UART_ID);
+	
+	if(len <= sizeof(entry.report))
+	{
+	  memcpy(entry.report, report, len);
+	  added = queue_try_add(&report_queues[addr-1][instance], &entry);;
+	}
 
 	while(len--)
 	{
@@ -226,4 +319,5 @@ void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 	}
 
 	tud_cdc_write_flush();
+	return added;
 }

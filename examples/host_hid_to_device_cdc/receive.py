@@ -8,6 +8,7 @@ assert STRUCT_SIZE == 10;
 if __name__ == "__main__":
 	ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=0.5)
 	while True:
+		ser.write(b'\x00') #trigger read
 		data = ser.read(STRUCT_SIZE)
 		if len(data) == STRUCT_SIZE:
 			magic, evt, addr, instance, vid, pid, length = struct.unpack(STRUCT_FORMAT, data)
