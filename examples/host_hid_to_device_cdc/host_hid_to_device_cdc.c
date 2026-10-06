@@ -42,6 +42,12 @@
 #include "host/hcd.h"
 #include "pio_usb.h"
 #include "tusb.h"
+#include "hardware/uart.h"
+
+#define UART_ID		uart1
+#define BAUD_RATE	115200
+#define UART_TX_PIN	20
+#define UART_RX_PIN	21
 
 /*------------- MAIN -------------*/
 
@@ -76,6 +82,12 @@ int main(void) {
 
   // init device stack on native usb (roothub port0)
   tud_init(0);
+
+  //configure uart
+  uart_init(UART_ID, BAUD_RATE);
+  gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+  gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+  uart_set_format(UART_ID, 8, 1, UART_PARITY_NONE);
 
   while (true) {
     tud_task(); // tinyusb device task
@@ -152,6 +164,7 @@ void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 	count = sprintf(tempbuf, "Magic %02x EVENT type %02x, addr %02x, instance %02x, [%04x:%04x] payload len %04x: ",
 		0x90, evt, addr, instance, vid, pid, len);
 	tud_cdc_write(tempbuf, count);
+	uart_write_blocking(UART_ID, tempbuf, count);
 
 	while(len--)
 	{
@@ -185,9 +198,11 @@ void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 
 	  count = sprintf(tempbuf, "%02x ", *report++);
 	  tud_cdc_write(tempbuf, count);
+	  uart_write_blocking(UART_ID, tempbuf, count);
 	}
 
 	tud_cdc_write_str("\r\n");
+	uart_puts(UART_ID, "\r\n");
 
 	switch(evt)
 	{
@@ -205,4 +220,5 @@ void dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 	}
 
 	tud_cdc_write_flush();
+	uart_tx_wait_blocking(UART_ID);
 }
