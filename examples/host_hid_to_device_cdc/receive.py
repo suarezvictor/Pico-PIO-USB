@@ -6,7 +6,7 @@ STRUCT_SIZE = struct.calcsize(STRUCT_FORMAT)
 assert STRUCT_SIZE == 10;
 
 if __name__ == "__main__":
-	ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=0.5)
+	ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=0.1) #small enouth to avoid filling queues
 	while True:
 		ser.write(b'\x00') #trigger read
 		data = ser.read(STRUCT_SIZE)

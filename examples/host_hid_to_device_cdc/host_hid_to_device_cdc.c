@@ -50,8 +50,12 @@
 #define UART_TX_PIN	20
 #define UART_RX_PIN	21
 
-#define REPORT_QUEUE_SIZE	10 //TODO: increase it with smaller data report buffers
+#define REPORT_QUEUE_SIZE	128
+#define LED_PIN	25
 
+//log functions by USB CDC
+#define tud_cdc_write_str(...)
+#define tud_cdc_write(...)
 
 typedef struct __attribute__((packed))
 {
@@ -61,7 +65,7 @@ typedef struct __attribute__((packed))
 
 typedef struct {
     report_header_t header;
-    uint8_t report[CFG_TUH_ENUMERATION_BUFSIZE];
+    uint8_t *report;
 } hid_report_entry_t;
 
 /*------------- MAIN -------------*/
@@ -108,6 +112,10 @@ int main(void) {
   // init device stack on native usb (roothub port0)
   tud_init(0);
 
+  //configure led
+  gpio_init(LED_PIN);
+  gpio_set_dir(LED_PIN, GPIO_OUT);
+
   //configure uart
   uart_init(UART_ID, BAUD_RATE);
   gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
@@ -145,6 +153,8 @@ int main(void) {
 			tud_cdc_write_str("***Resuming calls using tuh_hid_receive_report\r\n");
         }
 		tud_cdc_write_flush();
+
+	    gpio_put(LED_PIN, false);
     }
     
     tud_cdc_write_flush();
@@ -188,6 +198,7 @@ void on_uart1_rx()
     		{
 				uart_write_blocking(UART_ID, (uint8_t*) &entry.header, sizeof(entry.header));
 				uart_write_blocking(UART_ID, entry.report, entry.header.len);
+				free(entry.report);
 
 				if (was_full)
 				{
@@ -261,12 +272,20 @@ bool dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 		entry.header.magic, evt, addr, instance, vid, pid, len);
 	tud_cdc_write(tempbuf, count);
 	
-	if(len <= sizeof(entry.report))
 	{
-	  memcpy(entry.report, report, len);
-	  added = queue_try_add(&report_queues[addr-1][instance], &entry);;
+	  entry.report = len > 0 ? (uint8_t *) malloc(len) : NULL;
+	  if(entry.report != NULL || len == 0)
+	  {
+		  if(len > 0) memcpy(entry.report, report, len);
+		  added = queue_try_add(&report_queues[addr-1][instance], &entry);
+		  if(!added)
+		  {
+		  	free(entry.report);
+		    gpio_put(LED_PIN, true);
+		  }
+	  }
 	}
-
+#if 0
 	while(len--)
 	{
 	  //example HCD_EVENT_XFER_COMPLETE report for VID:PID 222a:0001
@@ -300,7 +319,7 @@ bool dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 	  count = sprintf(tempbuf, "%02x ", *report++);
 	  tud_cdc_write(tempbuf, count);
 	}
-
+#endif
 	tud_cdc_write_str("\r\n");
 
 	switch(evt)
