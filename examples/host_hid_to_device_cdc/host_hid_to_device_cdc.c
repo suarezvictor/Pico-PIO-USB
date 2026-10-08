@@ -46,11 +46,11 @@
 #include "hardware/uart.h"
 
 #define UART_ID		uart1
-#define BAUD_RATE	115200
+#define BAUD_RATE	230400
 #define UART_TX_PIN	20
 #define UART_RX_PIN	21
 
-#define REPORT_QUEUE_SIZE	128
+#define REPORT_QUEUE_SIZE	64 //64 allows about 250ms stalls in consumer (touchscreen device)
 #define LED_PIN	25
 
 //log functions by USB CDC
@@ -97,6 +97,7 @@ typedef struct {
 
 static queue_t resume_queue;
 void on_uart1_rx();
+bool drain_report_queues(void);
 
 // core0: handle device events
 int main(void) {
@@ -132,9 +133,6 @@ int main(void) {
       {
 		if(queue_init(&report_queues[dev_addr-1][instance], sizeof(hid_report_entry_t), REPORT_QUEUE_SIZE))
 			continue;
-
-		tud_cdc_write_str("Error: cannot allocate queues\r\n");
-		tud_cdc_write_flush();
 		panic("Error: cannot allocate queues\r\n");
       }
   }
@@ -146,14 +144,10 @@ int main(void) {
 	hid_dev_id_t dev_id;
     while (queue_try_remove(&resume_queue, &dev_id))
     {
-		tud_cdc_write_str("Resuming queue\r\n");
         if (tuh_hid_mounted(dev_id.dev_addr, dev_id.instance))
         {
             tuh_hid_receive_report(dev_id.dev_addr, dev_id.instance);
-			tud_cdc_write_str("***Resuming calls using tuh_hid_receive_report\r\n");
         }
-		tud_cdc_write_flush();
-
 	    gpio_put(LED_PIN, false);
     }
     
@@ -179,13 +173,8 @@ void tud_cdc_rx_cb(uint8_t itf)
   (void) count;
 }
 
-void on_uart1_rx()
+bool drain_report_queues(void)
 {
-    if(!uart_is_readable(UART_ID))
-      return;
-
-  uart_getc(UART_ID);
-
   hid_report_entry_t entry;
   for (uint8_t dev_addr = 1; dev_addr <= CFG_TUH_DEVICE_MAX; ++dev_addr)
   {
@@ -206,10 +195,27 @@ void on_uart1_rx()
 					queue_try_add(&resume_queue, &dev_id);
 				    tud_cdc_write_str("Error: buffer was full in tud_cdc_rx_cb\r\n");
 				}
+
+				return true;
 			}
 		}
     }
+
+    return false;
 }
+
+void on_uart1_rx(void)
+{
+	if (uart_is_readable(UART_ID))
+	{
+        (void)uart_getc(UART_ID);
+
+		if(!drain_report_queues())
+			uart_write_blocking(UART_ID, "\0", 1);
+		uart_tx_wait_blocking(UART_ID);
+	}
+}
+
 //--------------------------------------------------------------------+
 // Host HID
 //--------------------------------------------------------------------+
@@ -224,17 +230,11 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 {
 
 	if(!dump_report(HCD_EVENT_DEVICE_ATTACH, dev_addr, instance, desc_report, desc_len))
-	{
-	  tud_cdc_write_str("Error: buffer full in uh_hid_mount_cb\r\n");
 	  return;
-	}
 
 
   // tuh_hid_report_received_cb() will be invoked when report is available
-	if ( !tuh_hid_receive_report(dev_addr, instance) )
-	{
-	  tud_cdc_write_str("Error: cannot request report\r\n");
-	}
+	tuh_hid_receive_report(dev_addr, instance);
 }
 
 // Invoked when device with hid interface is un-mounted
@@ -247,15 +247,9 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len)
 {
 	if(!dump_report(HCD_EVENT_XFER_COMPLETE, dev_addr, instance, report, len))
-	{
-	  tud_cdc_write_str("Error: buffer full in tuh_hid_report_received_cb\r\n");
 	  return;
-	}
 
-  if ( !tuh_hid_receive_report(dev_addr, instance) )
-  {
-    tud_cdc_write_str("Error: cannot request report\r\n");
-  }
+  tuh_hid_receive_report(dev_addr, instance);
 }
 
 bool dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t const* report, uint16_t len)
@@ -285,58 +279,5 @@ bool dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 		  }
 	  }
 	}
-#if 0
-	while(len--)
-	{
-	  //example HCD_EVENT_XFER_COMPLETE report for VID:PID 222a:0001
-	  //START: 04 40 f6 05 55 28 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 01 ff 00 00 00 00 00 00
-	  //DRAG: 04 40 2c 06 35 28 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 50 00 00 00 01 41 ff 00 00 00 00 00 00
-	  //RELEASE: 04 00 98 05 3b 28 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10 0e 00 00 01 01 ff 00 00 00 00 00 00
-
-	  /*
-	  this together with te description report seems to imply:
-	#define TOUCH_REPORT_ID     0x04
-	#define TOUCH_MAX_CONTACTS  10
-	#define TOUCH_LOGICAL_MAX   16384
-
-	typedef struct __attribute__((packed)) {
-		uint8_t  contact_id : 6;   // bits 0-5
-		uint8_t  tip_switch : 1;   // bit 6
-		uint8_t  pad        : 1;   // bit 7
-		uint16_t x;                // 0..16384
-		uint16_t y;                // 0..16384
-	} touch_finger_t;
-
-	typedef struct __attribute__((packed)) {
-		uint8_t        report_id;                   // 0x04
-		touch_finger_t finger[TOUCH_MAX_CONTACTS];
-		uint32_t       scan_time;
-		uint8_t        contact_count;
-		uint8_t        vendor_reserved[8];
-	} touch_report_t;
-	*/
-
-	  count = sprintf(tempbuf, "%02x ", *report++);
-	  tud_cdc_write(tempbuf, count);
-	}
-#endif
-	tud_cdc_write_str("\r\n");
-
-	switch(evt)
-	{
-		case HCD_EVENT_DEVICE_ATTACH:
-			//850 bytes descriptor for PID:VID 222a:0001
-			tud_cdc_write_str("(EVENT_DEVICE_ATTACH)\r\n\r\n");
-			break;
-
-		case HCD_EVENT_DEVICE_REMOVE:
-			tud_cdc_write_str("(HCD_EVENT_DEVICE_REMOVE)\r\n\r\n");
-			break;
-
-		default:
-			break;
-	}
-
-	tud_cdc_write_flush();
 	return added;
 }
