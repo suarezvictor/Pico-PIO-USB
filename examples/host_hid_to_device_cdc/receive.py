@@ -5,7 +5,7 @@ import time
 STRUCT_FORMAT = '<4B3H'
 STRUCT_SIZE = struct.calcsize(STRUCT_FORMAT)
 assert STRUCT_SIZE == 10;
-MAGIC = 0x90
+MAGIC = 0x03 #matches TUSB_CLASS_HID
 
 
 def run(ser):
@@ -16,7 +16,7 @@ def run(ser):
 		pass
 
 	data = ser.read(1)
-	if data[0] != MAGIC:
+	if data[0] != MAGIC: #usually 0
 		return False
 
 	data = data + ser.read(STRUCT_SIZE-1)

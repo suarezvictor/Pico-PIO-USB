@@ -1,8 +1,7 @@
 /*
  * The MIT License (MIT)
  *
- * Copyright (c) 2019 Ha Thach (tinyusb.org)
- *                    sekigon-gonnoc
+ * Copyright (c) 2019 Ha Thach (tinyusb.org) sekigon-gonnoc
  * Copyright (c) 2026 Victor Suarez Rovere <suarezvictor@gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -24,11 +23,6 @@
  * THE SOFTWARE.
  *
  */
-
-// This example runs both host and device concurrently. The USB host receive
-// reports from HID device and print it out over USB Device CDC interface.
-// For TinyUSB roothub port0 is native usb controller, roothub port1 is
-// pico-pio-usb.
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -53,20 +47,28 @@
 #define REPORT_QUEUE_SIZE	64 //64 allows about 250ms stalls in consumer (touchscreen device)
 #define LED_PIN	25
 
-//log functions by USB CDC
-#define tud_cdc_write_str(...)
-#define tud_cdc_write(...)
+typedef struct __attribute__((packed))
+{
+    uint8_t dev_addr;
+    uint8_t instance;
+} hid_dev_id_t;
 
 typedef struct __attribute__((packed))
 {
-	  uint8_t magic, evt, addr, instance;
+	  uint8_t magic, evt;
+	  hid_dev_id_t hid;
 	  uint16_t vid, pid, len;
 } report_header_t;
 
-typedef struct {
+typedef struct
+{
     report_header_t header;
     uint8_t *report;
 } hid_report_entry_t;
+
+#define PROTOCOL_MAGIC TUSB_CLASS_HID
+#define PROTOCOL_NO_DATA TUSB_CLASS_UNSPECIFIED
+
 
 /*------------- MAIN -------------*/
 
@@ -83,17 +85,11 @@ void core1_main() {
   // port1) on core1
   tuh_init(1);
 
-  while (true) {
+  for(;;)
     tuh_task(); // tinyusb host task
-  }
 }
 
 static queue_t report_queues[CFG_TUH_DEVICE_MAX][CFG_TUH_HID];
-
-typedef struct {
-    uint8_t dev_addr;
-    uint8_t instance;
-} hid_dev_id_t;
 
 static queue_t resume_queue;
 void on_uart1_rx();
@@ -109,9 +105,6 @@ int main(void) {
   multicore_reset_core1();
   // all USB task run in core1
   multicore_launch_core1(core1_main);
-
-  // init device stack on native usb (roothub port0)
-  tud_init(0);
 
   //configure led
   gpio_init(LED_PIN);
@@ -138,39 +131,18 @@ int main(void) {
   }
   queue_init(&resume_queue, sizeof(hid_dev_id_t), CFG_TUH_DEVICE_MAX*CFG_TUH_HID);
 
-  while (true) {
-    tud_task(); // tinyusb device task
-    
+  for(;;)
+  {
 	hid_dev_id_t dev_id;
     while (queue_try_remove(&resume_queue, &dev_id))
     {
-        if (tuh_hid_mounted(dev_id.dev_addr, dev_id.instance))
-        {
-            tuh_hid_receive_report(dev_id.dev_addr, dev_id.instance);
-        }
 	    gpio_put(LED_PIN, false);
+        if (tuh_hid_mounted(dev_id.dev_addr, dev_id.instance))
+            tuh_hid_receive_report(dev_id.dev_addr, dev_id.instance);
     }
-    
-    tud_cdc_write_flush();
   }
 
   return 0;
-}
-
-//--------------------------------------------------------------------+
-// Device CDC
-//--------------------------------------------------------------------+
-
-// Invoked when CDC interface received data from host
-void tud_cdc_rx_cb(uint8_t itf)
-{
-  (void) itf;
-
-  char buf[64];
-  uint32_t count = tud_cdc_read(buf, sizeof(buf));
-
-  // TODO control LED on keyboard of host stack
-  (void) count;
 }
 
 bool drain_report_queues(void)
@@ -191,9 +163,8 @@ bool drain_report_queues(void)
 
 				if (was_full)
 				{
-					hid_dev_id_t dev_id = { entry.header.addr, entry.header.instance };
+					hid_dev_id_t dev_id = { entry.header.hid.dev_addr, entry.header.hid.instance };
 					queue_try_add(&resume_queue, &dev_id);
-				    tud_cdc_write_str("Error: buffer was full in tud_cdc_rx_cb\r\n");
 				}
 
 				return true;
@@ -211,7 +182,7 @@ void on_uart1_rx(void)
         (void)uart_getc(UART_ID);
 
 		if(!drain_report_queues())
-			uart_write_blocking(UART_ID, "\0", 1);
+			uart_putc(UART_ID, PROTOCOL_NO_DATA);
 		uart_tx_wait_blocking(UART_ID);
 	}
 }
@@ -228,10 +199,8 @@ bool dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 // therefore report_desc = NULL, desc_len = 0
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len)
 {
-
 	if(!dump_report(HCD_EVENT_DEVICE_ATTACH, dev_addr, instance, desc_report, desc_len))
 	  return;
-
 
   // tuh_hid_report_received_cb() will be invoked when report is available
 	tuh_hid_receive_report(dev_addr, instance);
@@ -258,26 +227,19 @@ bool dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 	
 	uint16_t vid, pid;
 	tuh_vid_pid_get(addr, &vid, &pid);
-	hid_report_entry_t entry = { .header = { 0x90, evt, addr, instance, vid, pid, len }};
+	hid_report_entry_t entry = { .header = { PROTOCOL_MAGIC, evt, {addr, instance}, vid, pid, len }};
 
-	char tempbuf[256];
-	int count;
-	count = sprintf(tempbuf, "Magic %02x EVENT type %02x, addr %02x, instance %02x, [%04x:%04x] payload len %04x: ",
-		entry.header.magic, evt, addr, instance, vid, pid, len);
-	tud_cdc_write(tempbuf, count);
-	
+	entry.report = len > 0 ? (uint8_t *) malloc(len) : NULL;
+	if(entry.report != NULL || len == 0)
 	{
-	  entry.report = len > 0 ? (uint8_t *) malloc(len) : NULL;
-	  if(entry.report != NULL || len == 0)
+	  if(len > 0) memcpy(entry.report, report, len);
+	  added = queue_try_add(&report_queues[addr-1][instance], &entry);
+	  if(!added)
 	  {
-		  if(len > 0) memcpy(entry.report, report, len);
-		  added = queue_try_add(&report_queues[addr-1][instance], &entry);
-		  if(!added)
-		  {
-		  	free(entry.report);
-		    gpio_put(LED_PIN, true);
-		  }
+	  	free(entry.report);
+		gpio_put(LED_PIN, true);
 	  }
 	}
+
 	return added;
 }
