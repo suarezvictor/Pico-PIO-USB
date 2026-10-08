@@ -1,11 +1,9 @@
-set(target_name host_hid_to_device_cdc)
+set(target_name host_hid_to_uart)
 add_executable(${target_name})
 
 target_sources(${target_name} PRIVATE
- host_hid_to_device_cdc.c
- usb_descriptors.c
+ host_hid_to_uart.c
  # can use 'tinyusb_pico_pio_usb' library later when pico-sdk is updated
- ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
  ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
  )
 
@@ -19,6 +17,6 @@ target_compile_definitions(${target_name} PRIVATE PIO_USB_USE_TINYUSB)
 # needed so tinyusb can find tusb_config.h
 target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 
-target_link_libraries(${target_name} PRIVATE pico_stdlib pico_pio_usb tinyusb_device tinyusb_host)
+target_link_libraries(${target_name} PRIVATE pico_stdlib pico_pio_usb tinyusb_host)
 pico_add_extra_outputs(${target_name})
 
