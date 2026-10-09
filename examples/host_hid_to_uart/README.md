@@ -17,7 +17,13 @@ Magic 03 EVENT type 02, addr 01, instance 00, [222a:0001] payload len 0040: 04 4
 
 As seen there's a header: Magic byte, event type byte, USB address byte, USB instance byte, VID (16-bit), PID (16-bit), payload length (16-bit) followed by the payload (the HID data report since type is 2, 64 bytes in this case since all is reported in hex). Note the initial value 04 corresponding to touch data.
 
-The full USB descriptor is reported with event type 0, so a smart receiver can decode the data report exactly. Alternatively, it can be ignored for known devices, since the data report always includes the VID and PID fields.
+_Update_: now the reports are parsed with [hid-tools](https://gitlab.freedesktop.org/libevdev/hid-tools), so report is formatted. See for example a mouse report:  
+```
+ Button: 1  1  0  0  0  0  0  0 | # | X:     0 | Y:     1 | Wheel:    0 | AC Pan:    0 
+```
+
+
+The full USB descriptor is reported with event type 0, so a smart receiver like `hid-tools` can decode the data report exactly. Alternatively, the descriptor report can be ignored for known devices, since the data report always includes the VID and PID fields.
 
 ## Queues
 

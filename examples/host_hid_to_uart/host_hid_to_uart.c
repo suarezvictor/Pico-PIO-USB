@@ -84,6 +84,7 @@ void core1_main() {
   // To run USB SOF interrupt in core1, init host stack for pio_usb (roothub
   // port1) on core1
   tuh_init(1);
+  tuh_hid_set_default_protocol(HID_PROTOCOL_REPORT); //avoid boot protocol TODO: use an external pin
 
   for(;;)
     tuh_task(); // tinyusb host task
