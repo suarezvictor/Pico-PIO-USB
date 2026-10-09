@@ -97,7 +97,8 @@ void core1_main() {
     tuh_task(); // tinyusb host task
 }
 
-static queue_t report_queues[CFG_TUH_DEVICE_MAX][CFG_TUH_HID];
+#define TUH_ADDR_COUNT (CFG_TUH_DEVICE_MAX+CFG_TUH_HUB)
+static queue_t report_queues[TUH_ADDR_COUNT][CFG_TUH_HID];
 
 static queue_t resume_queue;
 void on_uart1_rx();
@@ -128,7 +129,7 @@ int main(void) {
   irq_set_exclusive_handler(UART1_IRQ, on_uart1_rx);
   irq_set_enabled(UART1_IRQ, true);
 
-  for (uint8_t dev_addr = 1; dev_addr <= CFG_TUH_DEVICE_MAX; ++dev_addr)
+  for (uint8_t dev_addr = 1; dev_addr <= TUH_ADDR_COUNT; ++dev_addr)
   {
       for (uint8_t instance = 0; instance < CFG_TUH_HID; ++instance)
       {
@@ -137,7 +138,7 @@ int main(void) {
 		panic("Error: cannot allocate queues\r\n");
       }
   }
-  queue_init(&resume_queue, sizeof(hid_dev_id_t), CFG_TUH_DEVICE_MAX*CFG_TUH_HID);
+  queue_init(&resume_queue, sizeof(hid_dev_id_t), TUH_ADDR_COUNT*CFG_TUH_HID);
 
   for(;;)
   {
@@ -156,7 +157,7 @@ int main(void) {
 bool drain_report_queues(void)
 {
   hid_report_entry_t entry;
-  for (uint8_t dev_addr = 1; dev_addr <= CFG_TUH_DEVICE_MAX; ++dev_addr)
+  for (uint8_t dev_addr = 1; dev_addr <= TUH_ADDR_COUNT; ++dev_addr)
   {
       for (uint8_t instance = 0; instance < CFG_TUH_HID; ++instance)
       {
@@ -190,7 +191,7 @@ void on_uart1_rx(void)
         (void)uart_getc(UART_ID);
 
 		if(!drain_report_queues())
-			uart_putc(UART_ID, PROTOCOL_NO_DATA);
+			uart_putc_raw(UART_ID, PROTOCOL_NO_DATA);
 		uart_tx_wait_blocking(UART_ID);
 	}
 }
