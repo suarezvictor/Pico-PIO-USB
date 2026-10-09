@@ -12,14 +12,14 @@ The consumer MCU just sends a zero character to request information about the co
 The firmware continuosly polls the USB device for USB reports. Those can be device attached (code 0), detached (code 1), or general HID reports (code 2). For example, the case of a general ID report for a touch screen, as decoded by the [receive.py](receive.py) script:
 
 ```
-Magic 03 EVENT type 02, addr 01, instance 00, [222a:0001] payload len 0040: 04 40 49 00 20 30 00  [...] 
+Magic 03 EVENT type 02, time 7096ms, addr 01, instance 00, [222a:0001] payload len 0040: 04 40 49 00 20 30 00  [...] 
 ```
 
-As seen there's a header: Magic byte, event type byte, USB address byte, USB instance byte, VID (16-bit), PID (16-bit), payload length (16-bit) followed by the payload (the HID data report since type is 2, 64 bytes in this case since all is reported in hex). Note the initial value 04 corresponding to touch data.
+As seen there's a header: Magic byte, event type byte, timestamp (16-bit in ms), USB address byte, USB instance byte, VID (16-bit), PID (16-bit), payload length (16-bit) followed by the payload (the HID data report since type is 2, 64 bytes in this case since all is reported in hex). Note the initial value 04 corresponding to touch data.
 
 _Update_: now the reports are parsed with [hid-tools](https://gitlab.freedesktop.org/libevdev/hid-tools), so report is formatted. See for example a mouse report:  
 ```
- Button: 1  1  0  0  0  0  0  0 | # | X:     0 | Y:     1 | Wheel:    0 | AC Pan:    0 
+586ms:  Button: 1  0  0  0  0  0  0  0 | # | X:    0 | Y:    1 | Wheel:    0 | AC Pan:    0 
 ```
 
 

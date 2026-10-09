@@ -56,6 +56,7 @@ typedef struct __attribute__((packed))
 typedef struct __attribute__((packed))
 {
 	  uint8_t magic, evt;
+	  uint16_t timestamp;
 	  hid_dev_id_t hid;
 	  uint16_t vid, pid, len;
 } report_header_t;
@@ -69,6 +70,12 @@ typedef struct
 #define PROTOCOL_MAGIC TUSB_CLASS_HID
 #define PROTOCOL_NO_DATA TUSB_CLASS_UNSPECIFIED
 
+#if (CFG_TUSB_OS == OPT_OS_PICO)
+uint32_t tusb_time_millis_api(void)
+{
+    return to_ms_since_boot(get_absolute_time());
+}
+#endif
 
 /*------------- MAIN -------------*/
 
@@ -228,7 +235,7 @@ bool dump_report(hcd_eventid_t evt, uint8_t addr, uint8_t instance, uint8_t cons
 	
 	uint16_t vid, pid;
 	tuh_vid_pid_get(addr, &vid, &pid);
-	hid_report_entry_t entry = { .header = { PROTOCOL_MAGIC, evt, {addr, instance}, vid, pid, len }};
+	hid_report_entry_t entry = { .header = { PROTOCOL_MAGIC, evt, tusb_time_millis_api(), {addr, instance}, vid, pid, len }};
 
 	entry.report = len > 0 ? (uint8_t *) malloc(len) : NULL;
 	if(entry.report != NULL || len == 0)

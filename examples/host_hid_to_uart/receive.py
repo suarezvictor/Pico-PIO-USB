@@ -6,9 +6,9 @@ import sys
 sys.path.insert(0, "hid-tools")
 from hidtools.hid import ReportDescriptor
 
-STRUCT_FORMAT = '<4B3H'
+STRUCT_FORMAT = '<2B1H2B3H'
 STRUCT_SIZE = struct.calcsize(STRUCT_FORMAT)
-assert STRUCT_SIZE == 10;
+assert STRUCT_SIZE == 12;
 MAGIC = 0x03 #matches TUSB_CLASS_HID
 
 rdesc = dict()
@@ -32,12 +32,13 @@ def run(ser):
 		print("MISSING DATA", len(data), data)
 		return False
 	
-	magic, evt, addr, instance, vid, pid, length = struct.unpack(STRUCT_FORMAT, data)
+	magic, evt, millis, addr, instance, vid, pid, length = struct.unpack(STRUCT_FORMAT, data)
 	payload = ser.read(length)
 
 	header = (
 		f"Magic {magic:02x} " 
 		f"EVENT type {evt:02x}, " 
+		f"time {millis:0}ms, " 
 		f"addr {addr:02x}, " 
 		f"instance {instance:02x}, " 
 		f"[{vid:04x}:{pid:04x}] " 
@@ -48,9 +49,9 @@ def run(ser):
 			print(f"ATTACHED device addr {addr:02x}, instance {instance:02x}, [{vid:04x}:{pid:04x}]")
 			rdesc.setdefault(addr, {})[instance] = ReportDescriptor.from_bytes(payload)
 			rdesc[addr][instance].dump()
-		except:
+		except Exception as e:
 			print(header, payload.hex(' '))
-			print("DESCRPITION REPORT ERROR", e)
+			print("DESCRPITION REPORT ERROR:", e)
 
 	try:
 		r = rdesc[addr][instance]
@@ -59,7 +60,7 @@ def run(ser):
 			if report is None:
 				print("REPORT ERROR.", header, payload.hex(' '))
 			else:
-				print(report)
+				print(f"{millis}ms:", report)
 
 		if evt == 1:
 			print(f"DETACHED device addr {addr:02x}, instance {instance:02x}, [{vid:04x}:{pid:04x}]")
