@@ -21,7 +21,17 @@ _Update_: now the reports are parsed with [hid-tools](https://gitlab.freedesktop
 ```
 586ms:  Button: 1  0  0  0  0  0  0  0 | # | X:    0 | Y:    1 | Wheel:    0 | AC Pan:    0 
 ```
-
+There's also a C++ version based on [HIDDataInterpreter](https://github.com/o0Zz/HIDDataInterpreter/), which was [improved](https://github.com/suarezvictor/HIDDataInterpreter/commits/main/?author=suarezvictor) to support multitouch screens. It can report:  
+```
+report 0, block 0, type ContactId (20), id 81, offset 8, size 6, value 0 (0)
+report 0, block 0, type TipSwitch (19), id 66, offset 14, size 1, value 0 (0)
+report 0, block 0, type X (6), id 48, offset 16, size 16, value 1574 (1574)
+report 0, block 0, type Y (7), id 49, offset 32, size 16, value 7431 (7431)
+report 0, block 0, type ContactId (20), id 81, offset 48, size 6, value 1 (1)
+report 0, block 0, type TipSwitch (19), id 66, offset 54, size 1, value 1 (-1)
+report 0, block 0, type X (6), id 48, offset 56, size 16, value 1571 (1571)
+report 0, block 0, type Y (7), id 49, offset 72, size 16, value 10543 (10543)
+```
 
 The full USB descriptor is reported with event type 0, so a smart receiver like `hid-tools` can decode the data report exactly. Alternatively, the descriptor report can be ignored for known devices, since the data report always includes the VID and PID fields.
 

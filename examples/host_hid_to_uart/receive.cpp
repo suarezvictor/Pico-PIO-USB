@@ -15,6 +15,9 @@
 #include <inttypes.h>
 
 #include <memory>
+#include <map>
+#include <stdexcept>
+
 #include "HIDReportDescriptor.h"
 #include "../src/HIDUtils.h"
 
@@ -82,9 +85,9 @@ static ssize_t read_buf(int fd, uint8_t *buf, size_t n)
     return (ssize_t)received;
 }
 
-std::shared_ptr<HIDReportDescriptor> desc;
+static std::map<uint8_t, std::map<uint8_t, std::shared_ptr<HIDReportDescriptor>>> descriptors;
 
-bool parse_data_report(uint8_t *data, uint16_t datalen)
+bool parse_data_report(std::shared_ptr<HIDReportDescriptor> desc, uint8_t *data, uint16_t datalen)
 {
     bool found = false;
     const uint32_t total_bits = static_cast<uint32_t>(datalen) * 8;
@@ -121,6 +124,7 @@ bool parse_data_report(uint8_t *data, uint16_t datalen)
 				const char *typname = "Unknown";
 				switch(input.type)
 				{
+					case HIDIOType::Key: typname = "Key"; break;
 					case HIDIOType::X: typname = "X"; break;
 					case HIDIOType::Y: typname = "Y"; break;
 					case HIDIOType::Button: typname = "Button"; break;
@@ -224,20 +228,39 @@ static bool run(int fd)
 	{
 		case 0: //device attached
 		{
-			desc = std::make_shared<HIDReportDescriptor>(payload, length);
+			auto desc = std::make_shared<HIDReportDescriptor>(payload, length);
 			if(desc != NULL)
+			{
 				printf("Parsed %lu HID fields\n", desc->get_reports().size());
+				descriptors[addr][instance] = desc;
+			}
 			break;
 		}
 
 		case 1: //device detached
-			desc = NULL;
+			try
+			{
+				auto& descs = descriptors.at(addr);
+				descs.erase(instance);
+				if (descs.empty()) descriptors.erase(addr);
+				printf("DETACHED device addr %02x, instance %02x\n", addr, instance);
+			}
+			catch(const std::out_of_range&)
+			{
+				printf("no descriptor to detach for addr %02x, instance %02x\n", addr, instance);
+			}
 			break;
 			
 		case 2: //data report
-			if(desc != NULL && length != 0) //TODO: check length matching expected value
+			if (length != 0)
+			try
 			{
-				parse_data_report(payload, length);
+				auto desc = descriptors.at(addr).at(instance);
+				parse_data_report(desc, payload, length);
+			}
+			catch(const std::out_of_range&)
+			{
+				printf("no descriptor for addr %02x, instance %02x\n", addr, instance);
 			}
 			break;
 		default:
