@@ -129,7 +129,13 @@ bool parse_data_report(std::shared_ptr<HIDReportDescriptor> desc, uint8_t *data,
 					case HIDIOType::Y: typname = "Y"; break;
 					case HIDIOType::Button: typname = "Button"; break;
 					case HIDIOType::Wheel: typname = "Wheel"; break;
-					case HIDIOType::Consumer: typname = "Consumer"; break;
+					case HIDIOType::Consumer:
+						switch(input.id)
+						{
+							case 0x238: typname = "ACPan"; break;
+							default: typname = "Consumer";
+						}
+						break;
 					case HIDIOType::TipSwitch: typname = "TipSwitch"; break;
 					case HIDIOType::ContactId: typname = "ContactId"; break;
 					case HIDIOType::ScanTime: typname = "ScanTime"; break;
@@ -215,15 +221,10 @@ static bool run(int fd)
 
     printf("%dms: Magic %02x EVENT type %02x, "
            "addr %02x, instance %02x, "
-           "[%04x:%04x] payload len %04x:",
+           "[%04x:%04x] payload len %04x:\n",
            timestamp, magic, evt, addr, instance, vid, pid, length);
 
-    for (uint16_t i = 0; i < length; i++)
-        printf(" %02x", payload[i]);
-
-    printf("\n");
-    
-
+	bool parsed = false;
 	switch(evt)
 	{
 		case 0: //device attached
@@ -256,7 +257,7 @@ static bool run(int fd)
 			try
 			{
 				auto desc = descriptors.at(addr).at(instance);
-				parse_data_report(desc, payload, length);
+				parsed = parse_data_report(desc, payload, length);
 			}
 			catch(const std::out_of_range&)
 			{
@@ -266,6 +267,13 @@ static bool run(int fd)
 		default:
 			break;
 	}
+	
+	if(!parsed)
+	{
+		for (uint16_t i = 0; i < length; i++)
+		    printf(" %02x", payload[i]);
+	}
+	printf("\n");
  
 
 	free(payload);
