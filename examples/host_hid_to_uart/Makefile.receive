@@ -1,7 +1,7 @@
-INC = -I./components/HIDDataInterpreter/inc
+INC = -I./HIDDataInterpreter/inc
 CFLAGS = -O2 $(INC)
 
-SRC =  receive.cpp $(wildcard ./components/HIDDataInterpreter/src/*.cpp)
+SRC =  receive.cpp $(wildcard ./HIDDataInterpreter/src/*.cpp)
 
 all: receive
 
