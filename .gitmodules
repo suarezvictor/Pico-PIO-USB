@@ -1,6 +1,7 @@
 [submodule "examples/host_hid_to_uart/hid-tools"]
 	path = examples/host_hid_to_uart/hid-tools
 	url = https://gitlab.freedesktop.org/libevdev/hid-tools.git
-[submodule "examples/host_hid_to_uart/components/HIDDataInterpreter"]
+[submodule "examples/host_hid_to_uart/HIDDataInterpreter"]
 	path = examples/host_hid_to_uart/HIDDataInterpreter
-	url = https://github.com/o0Zz/HIDDataInterpreter.git
+	url = https://github.com/suarezvictor/HIDDataInterpreter.git
+

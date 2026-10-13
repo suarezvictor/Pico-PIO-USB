@@ -98,24 +98,42 @@ bool parse_data_report(uint8_t *data, uint16_t datalen)
 
         for (const auto &ioblock : report.inputs) //usually just 1
         {
-            uint32_t bit_offset = 0;
+            size_t bit_offset = 0;
 
             for (const auto &input : ioblock.data)
             {
-                uint32_t value = HIDUtils::read_bits_le(data, bit_offset, input.size);
-                bit_offset += input.size;
+            	size_t read_offset = bit_offset;
+                uint32_t value = HIDUtils::read_bits_le(data, read_offset, input.size);
 
+                bit_offset += input.size;
                 if (bit_offset > total_bits)
                     break; // Out of range
 
+                if (input.type == HIDIOType::Padding)
+					continue; // skip
+
                 if (input.type == HIDIOType::ReportId)
                 {
-                    if (value != input.id)
-                        break; // Not the correct report id
-                }
+					if(value == input.id) continue;
+					break; // Not the correct report id
+				}
+					
+				const char *typname = "Unknown";
+				switch(input.type)
+				{
+					case HIDIOType::X: typname = "X"; break;
+					case HIDIOType::Y: typname = "Y"; break;
+					case HIDIOType::Button: typname = "Button"; break;
+					case HIDIOType::Wheel: typname = "Wheel"; break;
+					case HIDIOType::Consumer: typname = "Consumer"; break;
+					case HIDIOType::TipSwitch: typname = "TipSwitch"; break;
+					case HIDIOType::ContactId: typname = "ContactId"; break;
+					case HIDIOType::ScanTime: typname = "ScanTime"; break;
+					case HIDIOType::ContactCount: typname = "ContactCount"; break;
+				}
 
-                printf("report %d, block %d, type %d, id %d, size %u, value %lu (%" PRId32 ")\n",
-                	i, block, input.type, input.id, input.size, value, (int32_t) HIDUtils::sign_extend(value, input.size));
+                printf("report %d, block %d, type %s (%d), id %d, offset %lu, size %u, value %lu (%" PRId32 ")\n",
+                	i, block, typname, input.type, input.id, read_offset, input.size, value, (int32_t) HIDUtils::sign_extend(value, input.size));
 
                 found = true;
             }
